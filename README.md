@@ -6,6 +6,8 @@
 
 The Mesopelagic Mesozooplankton and Micronekton Database (MMMD) compiles quantitative data on the distribution and density of mesopelagic species, using 258 published and unpublished sources spanning from 1880 to 2016. This extensive dataset includes 266,611entries, covering a broad temporal and spatial range with varying levels of completeness. The data were standardized to address inconsistencies in sampling methods, mesh sizes, and taxonomic classifications. Despite some limitations, including gaps in spatial and depth coverage, the database provides a valuable resource for the mesopelagic macro-ecological research, which is updatable. Comparisons with existing databases underscore its unique contributions to the study of mesopelagic ecosystems.
 
+Download dataset at: Egorova, Y., & Pakhomov, E. (2024). Mesopelagic Mesozooplankton and Micronekton Database [Data set]. Zenodo. https://doi.org/10.5281/zenodo.13786684
+
 ## How to Download and Run This Repository
 
 1. **Clone the Repository**:  
