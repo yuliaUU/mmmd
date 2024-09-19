@@ -1,0 +1,5 @@
+# files to ignore
+clean_mmmd/
+data/
+MMMD.xlsx
+.Rproj.user

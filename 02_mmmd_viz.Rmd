@@ -1,0 +1,797 @@
+---
+title: "MMMD Visualization"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r lib, message=FALSE, warning=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(glue)
+library(terra)
+library(raster)
+library(sf)      # for spTransform() & project()
+library(cowplot)
+library(patchwork)
+library(data.table)
+library(latex2exp)
+library(scales)
+library(ape) 
+library(RColorBrewer)
+library(treemap)
+library(ggtree) # BiocManager::install("ggtree")
+library(ggtreeExtra)#remotes::install_github("YuLab-SMU/ggtreeExtra")
+library(flextable)
+library(tidytree)
+library(rphylopic) # to get img of organisms form phylopic
+library(janitor)
+library(psych)
+# custom functions
+`%notin%` <- Negate(`%in%`)
+select=dplyr::select
+rename=dplyr::rename
+filter=dplyr::filter
+summarize=dplyr::summarize
+count=dplyr::count
+drop_na=tidyr::drop_na
+group_by=dplyr::group_by
+mutate=dplyr::mutate
+source(here::here("functions/theme_Publication.R"))
+source("functions/df2newick.R")
+PROJ <- "+proj=eck4 +lon_0=0 +x_0=0 +y_0=0 +ellps=WGS84 +datum=WGS84 +units=m +no_defs" 
+```
+```{r}
+load("data/map.RData")
+# Convert NE_box.prj to an sf object (if not already)
+NE_box_sf <- st_as_sf(NE_box.prj)
+# Get bounding box of the object
+bbox <- st_bbox(NE_box_sf)
+# Specify the width you want to extend outward
+expand_width <- 1000000  # Example: 1 million units in the coordinate system
+# Create the extended bounding box by adding/subtracting the expand width
+extended_bbox <- bbox
+extended_bbox["xmin"] <- bbox["xmin"] - expand_width
+extended_bbox["xmax"] <- bbox["xmax"] + expand_width
+extended_bbox["ymin"] <- bbox["ymin"] - expand_width
+extended_bbox["ymax"] <- bbox["ymax"] + expand_width
+# Create a polygon from the extended bounding box
+extended_polygon <- st_as_sfc(st_bbox(extended_bbox))
+# Create a difference polygon (subtract NE_box_sf from the extended_polygon)
+white_area <- st_difference(extended_polygon, st_union(NE_box_sf))
+# Convert white_area to a data frame for geom_polygon
+white_area_df <- st_as_sf(white_area) %>% 
+  st_cast("POLYGON") %>% 
+  st_coordinates() %>%
+  as.data.frame()
+```
+
+```{r plt-map-fun}
+palette1=c("#313695","#4575b4","#74add1","#abd9e9","#e0f3f8","#ffffbf","#fee090","#fdae61","#f46d43","#d73027","#a50026")
+plot.map<- function(NE_places.df, continious=TRUE,alpha = 0.5, size = 1){
+  names(NE_places.df) <- c("lon", "lat","PROB")
+# Create an sf object from the data frame
+sf_object <- st_as_sf(NE_places.df, coords = c("lon", "lat"), crs = 4326)
+# Transform the coordinates to the desired CRS
+transformed_sf <- st_transform(sf_object, crs = PROJ)
+# Extract the transformed coordinates and convert them to a data frame
+NE_places.df.prj <- as.data.frame(st_coordinates(transformed_sf))
+# Rename the columns
+names(NE_places.df.prj)[1:2] <- c("X.prj", "Y.prj")
+# transform to data.table (easier to work with)
+NE_places.dt.prj <- data.table(NE_places.df.prj,NE_places.df)
+
+plt<- ggplot() +
+  # add locations (points); add opacity with "alpha" argument
+  geom_point(data = NE_places.dt.prj, 
+             aes(x = X.prj, y = Y.prj, colour = PROB),size = size, 
+             alpha = alpha) +
+  geom_polygon(data = NE_countries.prj, 
+               aes(long,lat, group = group), 
+               colour = "gray20", fill = "gray40", size = .25) +
+  geom_polygon(data = white_area_df, aes(x = X, y = Y), fill = "white", color = NA) +
+  # add projected bounding box
+  geom_polygon(data = NE_box.prj, 
+               aes(x = long, y = lat), 
+               colour = "black", fill = "transparent", size = .25) +
+  # add graticules
+  geom_path(data = NE_graticules.prj, 
+            aes(long, lat, group = group), 
+            linetype = "dotted", colour = "grey50", size = .25) +
+  # add graticule labels - latitude and longitude
+  geom_text(data = lbl.Y.prj, # latitude
+            aes(x = X.prj, y = Y.prj, label = lbl), 
+            colour = "grey50", size = 2) +
+  geom_text(data = lbl.X.prj, # latitude
+            aes(x = X.prj, y = Y.prj*1.04, label = lbl), 
+            colour = "grey50", size = 2) +
+  # __ Set aspect ratio
+  coord_fixed(ratio = 1) +
+  # __ Set empty theme
+  theme_void(base_size=12, base_family="Times New Roman") + # remove the default background, gridlines & default gray color around legend's symbols
+  # final theme tweaks
+  theme(legend.title = element_text(colour="black", size=10, face="bold",angle = 90), # adjust legend title
+        legend.title.align = 0.5,
+        legend.direction = "vertical",
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(0,0,0,0),
+        #legend.position = c(1.01, 0.25), # relative position of legend
+        plot.margin = unit(c(t=0, r=1, b=0, l=0), unit="cm")
+        ) # adjust margins
+  # scale_color_distiller(palette = "Spectral", #labels = c(0, 0.25,0.5,0.75, 1),
+  #                       guide = guide_colourbar(
+  #                         title.position = "left",  barwidth=0.5,barheight=20,ticks=TRUE,
+  #                         nbin = 50))
+if (continious==FALSE) {
+  plt
+}else{
+  plt+scale_color_gradientn(colours = palette1,
+                                                   guide = guide_colourbar(
+                          title.position = "left",  barwidth=0.5,barheight=10,ticks=TRUE,
+                          nbin = 10))
+}
+  
+  }
+```
+
+# OBIS mesopelagic records (200-1000m)
+
+```{r figS1, fig.height=3, fig.width=5}
+data_reduced =readRDS(here::here("data/OBIS-reduced.rds"))
+data_reduced1 <-
+  data_reduced |> dplyr::group_by(depth1) |> dplyr::summarize(n =n()) 
+
+data_reduced1 |> ggplot(aes(y=n/10^3, x=depth1))+
+  #geom_line(color="steelblue")+
+  geom_smooth(span = 0.3, se=FALSE,color="steelblue")+
+  geom_point()+
+  geom_vline(xintercept = c(200, 1000), linetype="dashed",
+color = "black")+
+    theme_classic()+
+  labs(y=expression(
+    paste("number of records ", group("(",list("x10"^3),")"),sep='')) , 
+    x="Depth, m")+
+  scale_x_continuous(position="bottom")+
+  coord_flip()+
+  scale_x_reverse()
+ggsave("img/depth-vs-records.png" ,width=5, height=3, units="in", dpi=600)
+```
+
+```{r figS2, fig.height=10, fig.width=10, message=FALSE, warning=FALSE}
+global_grid <- raster::raster(nrows = 180/5, ncol = 360/5, xmn = -180, xmx = 180, ymn = -90, ymx = 90)
+map_depth <- function(data_reduced, zone_depth="200-300"){
+  #It may be preferable in these cases to plot the data on a grid. Here, we create a 5x5 degree global grid:
+
+
+#Get the longitude and latitude of the OBIS records:
+  allspp_obis=data_reduced |> filter(zone %in% zone_depth)
+
+  lonlat_sp <- cbind( x = allspp_obis$decimalLongitude, y = allspp_obis$decimalLatitude) # lon goes first, lat goes 2nd
+
+
+#And sum these over the grid:
+    gridded_occs <- rasterize(x= lonlat_sp, y = global_grid, filed=allspp_obis$zone, fun = "count")
+
+
+#Turn the gridded data back into a dataframe of points, and name the variables sensibly:
+  
+  obis.p <- data.frame(rasterToPoints(gridded_occs))
+names(obis.p) <- c("longitude", "latitude", "OBIS")
+
+obis.p |>  
+  plot.map(continious=FALSE, alpha=0.8, size=1.1)+
+  labs(title=paste(zone_depth, "m"), color="Number of occurences")+
+  theme(plot.title = element_text(hjust = 0.5))
+}
+
+
+
+allspp_obis=data_reduced
+lonlat_sp <- cbind( x = allspp_obis$decimalLongitude, y = allspp_obis$decimalLatitude) # lon 
+gridded_occs <- rasterize(x= lonlat_sp, y = global_grid, filed=allspp_obis$zone, fun = "count")
+obis.p <- data.frame(rasterToPoints(gridded_occs))
+names(obis.p) <- c("longitude", "latitude", "OBIS")
+p1<-map_depth(data_reduced, zone_depth="200-300")
+p2<-map_depth(data_reduced, zone_depth="300-400")
+p3<-map_depth(data_reduced, zone_depth="400-500")
+p4<-map_depth(data_reduced, zone_depth="500-600")
+p5<-map_depth(data_reduced, zone_depth="600-700")
+p6<-map_depth(data_reduced, zone_depth="700-800")
+p7<-map_depth(data_reduced, zone_depth="800-900")
+p8<-map_depth(data_reduced, zone_depth="900-1000")
+((p1 + p2)/ (p3 + p4)/(p5+p6)/(p7+p8))+ plot_layout(guides = "collect") &
+  #scale_colour_continuous(limits = range(obis.p$OBIS))+
+  scale_color_gradientn(limits = range(obis.p$OBIS),colours =c("#313695","#4575b4","#74add1","#abd9e9","#e0f3f8","#fee090","#fdae61","#f46d43","#d73027","#a50026"),
+                        #RColorBrewer::brewer.pal(11, 'Spectral')[11:1],
+                        na.value = "grey",
+                        trans="log10",
+                         breaks=trans_breaks('log10', function(x) 10^x),
+                        # labels=trans_format('log10', function(x) round(10^x,1)),
+                      labels = scales::label_comma(decimal.mark = ","),
+                        guide = guide_colourbar(title.position = "top",
+                        barwidth=20,barheight=0.8,ticks=TRUE,
+                        direction = "horizontal",
+                         title.theme = element_text(angle = 0) ,
+                        nbin = 12))&
+  theme(legend.position = "bottom")
+ggsave("img/depth-bins-records.png" ,width=10, height=11, units="in", dpi=600)
+```
+# Dataset Summary
+```{r}
+data_calibrated<- readRDS(file=here::here("data/MMMDatabase_clibrated.RDS")) 
+data_calibrated
+```
+```{r}
+data_calibrated |>
+  tabyl(source_database)|>
+ # adorn_percentages("col",,percent) |>   
+  adorn_pct_formatting(,,,percent)|> 
+  mutate(`Number of entries\n(% of all entries)`=paste0(n," (",percent,")"))%>%
+  select(-n,-percent) |> 
+  flextable()|> 
+  padding (padding = 0.1, part = "all") |> 
+  bold(bold = TRUE, part = "header") |> autofit()
+```
+
+```{r}
+glue("The database is in a single table with an accompanying table of column descriptions. The final database has {nrow(data_calibrated)} entries and {ncol(data_calibrated)} columns collected from {length(unique(data_calibrated$data_source))} different data sources, spanning the years {range(as.numeric(data_calibrated$year), na.rm=TRUE)} and {data_calibrated |>  select(dec_lon, dec_lat) |> distinct() |> nrow()} unique locations")
+```
+# Missing Info
+```{r Fig.2-missing, fig.height=6, fig.width=7}
+library(naniar)
+gg_miss_var(data_calibrated |> select(-c(id,source_database, data_source, net_standardized, reference:extra_info)),show_pct=TRUE)+theme_Publication()+
+  scale_y_continuous(expand=c(0,0),
+                     breaks=scales::pretty_breaks(n=10),
+                      labels = scales::label_comma(decimal.mark = ","), limits=c(0,105))
+
+ggsave("img/missing-info.png", width=7, height=6, units="in", dpi=600)
+```
+
+```{r}
+glue(" {data_calibrated |> select(net_standardized) |>  drop_na(net_standardized) |> distinct() |> nrow()} different sampling methods were recorded in the MMM Database" )
+
+```
+
+
+
+```{r Tbl3-rank}
+tbl3<- data_calibrated |>  tabyl(taxonomic_rank) |> arrange(desc(percent)) |> adorn_pct_formatting()|> 
+  mutate(`Number of entries\n(% of all entries)`=paste0(n," (",percent,")"))%>%
+  mutate(across(everything(), ~ replace_na(.x, "-"))) |> 
+  select(-n,-percent) |> 
+  rename(`Taxonomic rank`=taxonomic_rank) |> 
+  mutate(`Number of entries\n(% of all entries)`=gsub("0.0%","<0.1%",`Number of entries\n(% of all entries)`)) |> 
+  flextable() |> autofit()|> padding (padding = 0, part = "all") |> 
+  bold(bold = TRUE, part = "header")
+
+tbl3
+#print(tbl3, "docx")
+```
+
+```{r Tbl4}
+tbl4<- data_calibrated |>  tabyl(quantity_unit) |> arrange(desc(percent)) |> adorn_pct_formatting()|> 
+  mutate(`Number of entries\n(% of all entries)`=paste0(n," (",percent,")"))%>%
+  mutate(across(everything(), ~ replace_na(.x, "-"))) |> 
+  select(-n,-percent) |> 
+  rename(`Abundance/Biomass units`=quantity_unit) |> 
+    mutate(`Number of entries\n(% of all entries)`=gsub("0.0%","<0.1%",`Number of entries\n(% of all entries)`)) |> 
+  flextable() |> autofit()|> padding (padding = 0, part = "all") |> 
+  bold(bold = TRUE, part = "header")
+
+tbl4
+#print(tbl4, "docx")
+```
+# Nets Info
+
+```{r Tbl2-nets}
+tbl2<- data_calibrated |>  tabyl(net_standardized)|> 
+  mutate(net_standardized=ifelse(is.na(net_standardized),"No net information",net_standardized)) |> 
+  arrange(desc(n))|>
+  mutate(net_standardized = ifelse(n < 5000, "Other catch methods", net_standardized)) |> 
+  group_by(net_standardized) |> summarize(n=sum(n),percent =sum(percent ))|> 
+  arrange(desc(n))%>%
+  mutate(percent = round(percent*100,1))%>%
+  mutate(`Number of entries\n(% of all entries)`=paste0(n," (",percent,"%)"))%>%
+  mutate(across(everything(), ~ replace_na(.x, "-"))) |> 
+  select(-n,-percent) |> 
+  mutate(`Sampling Method`=case_when(
+    net_standardized=="JN"~"Juday net",
+    net_standardized=="MOCNESS"~"MOCNESS (Multiple Opening and Closing Net System)",
+    net_standardized=="RMT8"~"RMT8 (rectangular midwater trawl system)",
+    net_standardized=="PN"~"Plankton net",
+    net_standardized=="BR"~"Bogorov – Ross net",
+    net_standardized=="MULT"~"Multiple sampling techniques",
+    net_standardized=="OBS"~"Submersible observations",
+    net_standardized=="MPN - HYDROBIOS"~"MPN - HYDROBIOS (Multiple Plankton Net)",
+    net_standardized=="DzhOM"~"DzhOM (Oceanic modification of the Juday) net",
+    net_standardized=="BIONESS"~"BIONESS (Bedford Institute of Oceanography Net and Environmental Sampling System)",
+    net_standardized=="VMPS"~"Vertical Multiple Plankton Sampler",
+    net_standardized=="NORPAC"~"North Pacific Standard Plankton Net",
+    net_standardized=="MPS"~"Multiple Plankton Sampler",
+    net_standardized=="BPS"~"Bongo Plankton Sampler",
+    TRUE~net_standardized
+  ))|> select(-net_standardized) |>
+  select(`Sampling Method`,`Number of entries\n(% of all entries)`)  |> mutate(`Sampling Method` = factor(`Sampling Method`),
+                                                                              `Sampling Method` = fct_relevel(`Sampling Method`, "Other catch methods", after = Inf)) |> 
+  arrange(`Sampling Method`) |> 
+  as_tibble() |> 
+  flextable() |> autofit() |> padding (padding = 0, part = "all") |> 
+  bold(bold = TRUE, part = "header")
+tbl2
+#print(tbl2, "docx")
+```
+
+```{r fig5-descr, fig.height=8, fig.width=7}
+nets_plt1 <- data_calibrated |> mutate(mesh_size_um=as.numeric(mesh_size_um))%>% 
+  dplyr:: select(mesh_size_um) %>% dplyr::filter(mesh_size_um <=1000) %>% 
+  ggplot(., aes(x = mesh_size_um)) +
+        geom_histogram(aes(y = ..count..), bins =15, color= "white",fill="cornflowerblue")+ theme_classic()+
+  labs(subtitle= expression("Meso:"<="1000"~ mu*m),
+       x=expression("mesh size"~ mu*m))+
+  scale_y_log10(tran="log10",expand=c(0,0),
+                labels = scales::label_comma(decimal.mark = ","),
+                breaks = trans_breaks("log10", function(x) 10^x))+
+  theme_Publication()+
+   labs(x=TeX(r"(\textbf{Mesh size, $\mu m$})"),
+        y="Number of records")
+
+nets_plt2 <- data_calibrated |> mutate(mesh_size_um=as.numeric(mesh_size_um))%>% 
+  dplyr:: select(mesh_size_um) %>%  dplyr::filter(mesh_size_um >1000) %>% 
+  ggplot(., aes(x = mesh_size_um)) +
+        geom_histogram(aes(y = ..count..), bins =15, color= "white", fill="cornflowerblue")+ theme_classic()+
+  labs(subtitle= expression("Macro:">"1000"~ mu*m),
+       x=expression("mesh size"~ mu*m))+
+  scale_y_log10(tran="log10",expand=c(0,0),
+                labels = scales::label_comma(decimal.mark = ","),
+                breaks = trans_breaks("log10", function(x) 10^x))+
+  theme_Publication()+
+  labs(x=TeX(r"(\textbf{Mesh size, $\mu m$})"),
+        y="Number of records")
+
+timeday_plt<- data_calibrated |> select(day_night_twilight) |> drop_na(day_night_twilight) |>
+  ggplot(aes(x=reorder(day_night_twilight, day_night_twilight, function(x) -length(x))))+
+  geom_bar(fill="cornflowerblue", colour="white")+
+ scale_y_log10(expand = c(0,0),
+               breaks = trans_breaks("log10", function(x) 10^x),
+               labels = scales::label_comma(decimal.mark = ",")
+               )+
+  #scale_x_log10() +
+  # scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x),
+  #             labels = trans_format("log10", math_format(10^.x)))+
+  theme_Publication()+
+  labs(x="Time of sampling",y="Number of records")
+
+yr_plt<- data_calibrated |> select(year) |> drop_na(year) |>
+  ggplot(aes(x=year))+
+  geom_histogram(fill="cornflowerblue", bins=30,colour="white")+
+ scale_y_log10(expand = c(0,0),
+               breaks = trans_breaks("log10", function(x) 10^x),
+               labels = scales::label_comma(decimal.mark = ",")
+               )+
+  scale_x_continuous(breaks=scales::pretty_breaks(n=8))+
+  theme_Publication()+
+  labs(x="year",y="Number of records")
+
+((nets_plt1+nets_plt2)/(yr_plt / timeday_plt))+   plot_annotation(tag_levels = 'a')+
+  plot_layout(heights =  c(1, 2.5))
+ggsave("img/MMMD-description.png" ,width=7, height=8, units="in", dpi=600)
+```
+```{r haul_type}
+data_calibrated |> tabyl(haul_type) |> adorn_pct_formatting()
+```
+```{r day_night_twilight}
+data_calibrated |> tabyl(day_night_twilight) |> adorn_pct_formatting()
+```
+
+# Phylum data
+
+
+```{r}
+load("taxa_res.RData")
+data_calibrated_with_taxonom<- data_calibrated |> left_join(taxa_res)
+glue("The MMM database has {length(unique(data_calibrated_with_taxonom |> drop_na(phylum) |> pull(phylum)))} phyla")
+unique(data_calibrated_with_taxonom |> drop_na(phylum) |> pull(phylum))
+```
+
+```{r Tbl-phylum}
+tbl.phylum<- data_calibrated_with_taxonom |> drop_na(phylum)|> tabyl(phylum) |> arrange(desc(n)) |> adorn_pct_formatting()|> 
+  mutate(`Number of entries\n(% of all entries)`=paste0(n," (",percent,")"))%>%
+  mutate(across(everything(), ~ replace_na(.x, "-"))) |> 
+  select(-n,-percent) |> rename(Phylum=phylum) |> 
+    mutate(`Number of entries\n(% of all entries)`=gsub("0.0%","<0.1%",`Number of entries\n(% of all entries)`)) |> 
+  flextable() |> autofit()|> padding (padding = 0, part = "all") |> 
+  bold(bold = TRUE, part = "header")
+tbl.phylum
+#print(tbl.phylum, "docx")
+```
+
+```{r TableS2}
+tbl4<-data_calibrated_with_taxonom |> 
+  drop_na(phylum,class) |> 
+  select(phylum,class,order,family,genus,species) |> 
+  group_by(phylum,class) |> 
+  summarize(#`Number of orders`=length(na.omit(unique(order))),
+            #`Number of  families`=length(na.omit(unique(family))),
+            #`Number of genuses`=length(na.omit(unique(genus))),
+            `Number of species`=length(na.omit(unique(species)))) |>
+  
+  flextable() %>% autofit() |> 
+  merge_v(j = c("phylum"), part = "body") %>%
+  valign(j = c("phylum"),
+         valign = "top",
+         part = "body") %>%
+  bold(j = c("phylum"),
+       bold = TRUE,
+       part = "body") %>%
+  bold(bold = TRUE, part = "header") |> 
+  padding (padding = 0, part = "all")
+tbl4
+#print(tbl4, "docx")
+```
+
+
+
+
+
+
+
+
+
+
+
+# Maps
+```{r mmmd-data_source, fig.height=8, fig.width=7}
+mmmmd<- data_calibrated  |>select(dec_lon, dec_lat,source_database) |> drop_na() |> 
+  mutate(source_database=factor(source_database, levels=c("This work","BioTIME","JeDI","COPEPOD","PANGAEA")))
+
+plt1<- plot.map(mmmmd |> filter(source_database =="This work"),continious=FALSE, alpha=0.8)+
+  labs(subtitle="a) Compiled Data",color="")+
+  scale_color_manual(values=c("#009E73"))+
+  guides(color = guide_legend(override.aes = list(size = 3))) 
+
+plt2<- plot.map(mmmmd |> filter(source_database !="This work"),continious=FALSE, alpha=0.8)+
+  scale_color_manual(values=c("#009E73","#d7191c","#fc8d62","#0072B2","#abd9e9"),
+                    breaks=c("This work","BioTIME","JeDI","COPEPOD","PANGAEA"))+
+  labs(subtitle="b) Global Datasets", color="")+
+  guides(color = guide_legend(override.aes = list(size = 3)))
+
+plt1 / plt2 + plot_layout(guides = 'collect')& 
+  theme(plot.tag = element_text("Times New Roman",face = "bold", size = 12,hjust = -3, vjust = 0))
+  
+
+ggsave("img/MMMD-vs-datasets.png" ,width=7, height=7, units="in", dpi=600)
+```
+
+```{r fig1-mmmd,fig.height=4, fig.width=7}
+# Install and load required packages
+library(hexbin)
+# Select the dec_lon and dec_lat columns
+data_selected <- data_calibrated |> select(dec_lon, dec_lat)|> 
+  drop_na()
+# Create an sf object from the data frame
+sf_object <- st_as_sf(data_selected, coords = c("dec_lon", "dec_lat"), crs = 4326)
+# Transform the coordinates to the desired CRS
+transformed_sf <- st_transform(sf_object, crs = PROJ) 
+# Convert the transformed sf object to a data frame with lon and lat
+transformed_df <- st_as_sf(transformed_sf) %>%
+  st_coordinates() %>%
+  as.data.frame()
+
+  # Extract hex bin data from the plot into a data frame
+hex_bins <- ggplot_build(
+  ggplot(data = transformed_df, aes(x = X, y = Y)) +
+    geom_hex(bins = 50)
+)$data[[1]]
+
+# Convert hex bin data to a spatial object (sf)
+hex_sf <- st_as_sf(hex_bins, coords = c("x", "y"), crs = PROJ)
+
+
+# Plot the cropped hex bins in ggplot2 and color by a field (e.g., 'count' or 'density')
+ggplot() +
+  geom_sf(data = hex_sf, aes(color = count), shape=18, size=2.5) +
+    # Plot the world map on top of the hexagons
+  geom_polygon(data = NE_countries.prj, 
+               aes(long, lat, group = group), 
+               colour = "gray20", fill = "gray30", size = .25)+
+  geom_polygon(data = white_area_df, aes(x = X, y = Y), fill = "white", color = NA) +
+  # add projected bounding box
+  geom_polygon(data = NE_box.prj, 
+               aes(x = long, y = lat), 
+               colour = "black", fill = "transparent", size = .25)+
+   # add graticules
+  geom_path(data = NE_graticules.prj, 
+            aes(long, lat, group = group), 
+            linetype = "dotted", colour = "grey50", size = .25) +
+  # add graticule labels - latitude and longitude
+  geom_text(data = lbl.Y.prj, # latitude
+            aes(x = X.prj, y = Y.prj, label = lbl), 
+            colour = "grey50", size = 2) +
+  geom_text(data = lbl.X.prj, # latitude
+            aes(x = X.prj, y = Y.prj*1.04, label = lbl), 
+            colour = "grey50", size = 2) +
+  # __ Set empty theme
+  theme_void(base_size=12, base_family="Times New Roman") + # remove the default background, gridlines & default gray color around legend's symbols
+  # final theme tweaks
+  theme(legend.title = element_text(colour="black", size=10, face="bold",angle = 90), # adjust legend title
+        legend.title.align = 0.5,
+        legend.direction = "vertical",
+        legend.margin=margin(0,0,0,0),
+        legend.box.margin=margin(0,0,0,0),
+        #legend.position = c(1.01, 0.25), # relative position of legend
+        plot.margin = unit(c(t=0, r=1, b=0, l=0), unit="cm")
+        ) +
+  scale_color_gradientn(colours =palette1,
+                        #RColorBrewer::brewer.pal(11, 'Spectral')[11:1],
+                        na.value = "grey",
+                        trans="log10",
+                        # breaks=trans_breaks('log10', function(x) 10^x),
+                        # labels=trans_format('log10', function(x) round(10^x,1)),
+                        guide = guide_colourbar(title.position = "left",
+                      barwidth=0.5,barheight=10,ticks=TRUE,
+                          nbin = 12))+
+  labs(color="Number of Records")+
+  # Set the background outside the polygons to white
+  theme(
+    panel.background = element_rect(fill = "white", colour = NA),
+    plot.background = element_rect(fill = "white", colour = NA)
+  ) 
+ggsave("img/MMMD_coverage_hexbin.png" ,width=7, height=4, units="in", dpi=600)
+```
+
+
+
+
+
+
+
+
+
+
+
+# Tree
+
+S Xu, Z Dai, P Guo, X Fu, S Liu, L Zhou, W Tang, T Feng, M Chen, L Zhan, T Wu, E Hu, Y Jiang, X Bo, G Yu.
+ggtreeExtra: Compact visualization of richly annotated phylogenetic data. Molecular Biology and Evolution.
+2021, 38(9):4039-4042. doi: 10.1093/molbev/msab166
+
+Guangchuang Yu, David Smith, Huachen Zhu, Yi Guan, Tommy Tsan-Yuk Lam. ggtree: an R package for visualization
+and annotation of phylogenetic trees with their covariates and other associated data. Methods in Ecology and
+Evolution. 2017, 8(1):28-36. doi:10.1111/2041-210X.12628
+
+G Yu. Data Integration, Manipulation and Visualization of Phylogenetic Trees (1st ed.). Chapman and Hall/CRC.
+2022. ISBN: 9781032233574 
+
+```{r}
+# dataset: phylum, class, order, family,species
+tres <- data_calibrated_with_taxonom|>  drop_na(species) |> 
+  select(phylum, class, order, family,species) |> 
+  arrange(phylum) |> 
+  # i only want diagram for species only
+  drop_na(phylum,species) |> 
+  # tips will be family labels
+  # this functions do not take empty spaces
+  mutate(
+    family=ifelse(is.na(family)==TRUE, "N/S", family),
+    family=gsub(" ", "_", family)# for Cyclopoida_incertae_sedis
+    )
+tres 
+
+# histograms:  need to have a tip label (family) and number of species 
+n_sp <- tres |> 
+  group_by(phylum, class, order, family) |> 
+  count() |> ungroup() |> 
+  select(family,n)
+n_sp
+
+# get only unique taxonomic classification of phylum, class, order, family
+tres_short <- tres |> select(-species) |> 
+  distinct() |> 
+    arrange(phylum, class, order, family) |> as.data.frame()
+tres_short
+```
+```{r}
+tres |>  filter(family=="N/S")
+```
+```{r }
+# create a tree
+tree_text <- df2newick(tres_short,TRUE)
+mytree <- read.tree(text=tree_text, FALSE) #parsing newick string (re-exported from ape)
+
+# edge labels
+#get the node # for center
+c<-   as.data.frame(mytree$edge)
+edge.length<- c |>   mutate(edge.length = if_else(V1 == as.character(min(c$V1)) , 0.5, 1))
+# add edge.length if different values needed 
+mytree$edge.length=as.numeric(edge.length$edge.length)
+
+#drop tree with just phylum , class, and order names 
+to_drop<-c(unique(tres_short$phylum), unique(tres_short$class),unique(tres_short$order))
+tree_reduced <- drop.tip(mytree, to_drop)
+
+# clean tree for plotting 
+tr2 <- ggtree(tree_reduced,
+             # branch.length='none',
+              layout="circular" )  
+
+c= as.data.frame(tree_reduced$edge) |> rename(parent=V1, node=V2)
+center_node=as.character(min(c$parent))
+
+# get nodes for each circle
+phylum_nodes<- as_tibble(tree_reduced) |> filter(parent==center_node,node !=center_node) |>  select(-branch.length) 
+class_nodes <- as_tibble(tree_reduced)|> filter( parent %in% phylum_nodes$node)|> select(-branch.length)
+order_nodes <- as_tibble(tree_reduced)|> filter( parent %in% class_nodes$node)|>  select(-branch.length)
+family_nodes <- as_tibble(tree_reduced)|> filter( parent %in% order_nodes$node)|> select(-branch.length)
+
+
+# assign each node a class
+nodes<- phylum_nodes|>select(phylum_node=parent, parent=node, phylum_lbl=label) |> 
+  full_join(class_nodes)|>
+  select(phylum_node,phylum_lbl,class_node=parent, parent=node, class_lbl=label)|> 
+  full_join(order_nodes) |> 
+  select(phylum_node,phylum_lbl,class_node, order_node=parent, parent=node,class_lbl,order_lbl=label)|> 
+  full_join(family_nodes) |> 
+  mutate(label=ifelse(is.na(phylum_lbl)==FALSE,phylum_lbl,label),
+    label=ifelse(is.na(class_lbl)==FALSE,class_lbl,label),
+         label=ifelse(is.na(order_lbl)==FALSE,order_lbl,label)) |> 
+  left_join(tres_short |> select(phylum, label=family))
+
+phylum_nodes_labeled <-  phylum_nodes |> left_join(nodes |> select(parent=phylum_node,node= class_node,phylum))
+class_nodes_labeled <-  class_nodes |> left_join(nodes |> select(parent=class_node,node= order_node,phylum))
+order_nodes_labeled <- order_nodes |> left_join(nodes |> select(parent=order_node,node= parent,phylum))
+family_nodes_labeled <- family_nodes |> left_join(nodes |> select(parent,node,phylum))
+nodes<- rbind(phylum_nodes_labeled ,class_nodes_labeled,order_nodes_labeled,family_nodes_labeled)
+
+# add phylum column to th tree data
+tr2$data<- nodes|>right_join(tr2$data) |>left_join(n_sp |> rename(label=family))
+
+#Create a custom color scale
+
+myColors <- brewer.pal(8,"Set1")
+colors=c("#55baf9","#a8dcf3","#c091ee","#e57a76","#6dcf68","#e4b2e6","#f2f277","#e3aa6b","#045080","#b3eb51")
+colors=c("#2b2dff","#27e5e3","#a11fd8","#ff0101","#158a15","#e946f3","#ffff00","#fd8000","#045080","#b3eb51")
+names(myColors) <- levels(tres_short$phylum)
+colScale <- scale_colour_manual(name = "phylum", values = colors,guide = "none")
+filScale <- scale_fill_manual(name = "phylum", values = colors)
+
+
+# Highlight nodes by phylum
+class_nodes<- as_tibble(tree_reduced) |> drop_na(label)|> 
+  left_join(tres |> select(phylum, label=family) |> distinct() )|> select(-branch.length)
+
+tr3 <- tr2  +
+  geom_hilight(data=class_nodes, aes(node=node, fill=phylum),
+               type = "roundrect", alpha=0.5,to.bottom=F,align ="left")+
+  filScale+
+  geom_tree(data=tr2$data,aes(color=phylum), alpha=1)+
+  colScale+
+  geom_tiplab(align=TRUE,
+                   linetype=3,
+                   size=2, hjust = 1,
+                   linesize=0.2)+
+  guides(fill=guide_legend(title=NULL))
+
+# Add layer with histograms
+n_stat<- n_sp |> rename(y=family, tot=n)
+tr4<- tr3+  geom_fruit(
+    data = n_stat,
+    geom = geom_bar,
+    mapping = aes(x = log10(tot), y = y),
+    orientation = "y",
+    stat = "identity",
+    pwidth=0.2,
+    offset=0.01,
+    grid.params=list(),
+     axis.params=list(   axis       = "x",
+                         text.size  = 1.8,
+                         hjust      = 0.5,
+                         vjust      = 0.7,
+                         nbreak     = 3,
+  )) +
+     theme(
+         legend.title=element_text(size=9), 
+         legend.text=element_text(size=7) 
+     )+
+  labs(fill="")
+```
+```{r }
+# get images from phylopic for each family
+names = tres |> select(family) |> distinct() |> as.data.frame() |> arrange(family) |> mutate(uid=NA)
+
+# this function will give error message: cause some names cant be found
+for (i in 1:nrow(names)){
+    tryCatch({
+    names$uid[i]=get_uuid(name = names$family[i], n=1)
+    }, error=function(e){
+      #cat("ERROR :",conditionMessage(e), "\n")
+      })
+}
+names
+
+save(names,file="phylopic.RData")
+```
+
+```{r}
+set.seed(1)
+uid<- names |>  
+  left_join(tres_short) |>
+  rename(name=family)|> 
+  group_by( uid) |>  
+  sample_n(1) |> 
+  ungroup() |> 
+  filter(uid %notin% c(
+    "4b2f8bbb-33b2-47b0-a046-3477f79ba583",
+    "b11942ac-9e3f-42da-90f0-3c2179d42725",
+    "310eed9b-1193-47a8-8832-1d4eefccec21",
+    "34354e80-d132-41a1-961c-1cc229bd4440",
+    "f49ce14c-7e07-4502-adc8-18dbf67a64c4",
+    "dc97d4bb-1fb3-4fe0-905a-b96dbca9eb36",
+    "4e64006c-4a03-4bf0-8f40-b3cf8eca97c0",
+    "205ba057-8727-439c-a3ae-4b82b007f8be",
+    "f9d61c21-674d-4f7b-bd7f-de1762430918",
+    "0de35c9c-31a6-4d34-b899-14ebfbebbfa8",
+    "4edcdf47-680a-4879-99fd-2c078798186c",
+    "f1b5e7ee-88ee-4d40-8e0f-c59781f6feeb",
+    "2b77991f-ba4f-4d6a-8f19-3b979b582b07",
+    "12b88747-2892-454a-a882-c9c7e5f2c715",
+    "f2fb5773-f8ff-45b0-9c6c-cc5aef3c93d5",
+    "0e346a59-d0f8-4740-b641-bd48c5f4edfe",
+    "6252bc2d-aec4-424c-916c-6683604fcbf8",
+    "84bb3372-b912-4801-b1d5-b27f50f37888",
+    "205ba057-8727-439c-a3ae-4b82b007f8be"
+  ))
+
+uid_fil <- uid |> select(name , uid) |>
+  filter(
+    name %notin% c(
+      #Chaetognatha
+      "Krohnittidae",
+      #Arthropoda
+      "Polychelidae","Galatheidae","Mysidae","Epialtidae",
+      #chordata
+      "Oikopleuridae","Doliolidae","Hexagrammidae","Macrouridae","Ceratiidae","Pleuronectidae","Syngnathidae","Osmeridae" ,
+      #chordata
+      "Opisthoproctidae","Gobiidae","Nototheniidae" ,"Engraulidae" ,"Carangidae","Clupeidae","Merlucciidae","Ammodytidae","Anoplogastridae"  ,
+      # cnidaria
+      "Campanulariidae" ,"Aeginidae" ,"Pyrostephidae","Cassiopeidae"  ,
+      #mollusca
+      "Cirroteuthidae" ,"Pyroteuthidae","Cranchiidae","Sepiolidae","Ommastrephidae",
+      # Stenophora
+      "Mertensiidae","Bolinopsidae"  ,"Beroidae"  ,"Eurhamphaeidae"  ,"Lampoctenidae"
+    )
+  ) |>
+  mutate(
+    uid = ifelse(name == "Salpidae","6a396f0f-e0c8-4d0c-99b2-ec5adf551ef3",uid),
+    uid = ifelse(name == "Ampeliscidae","95981b99-36cc-413e-bf59-0454fde43c85",uid)) |>
+  # add missing images
+  rbind(data.frame(
+    name = c("Tomopteridae", 
+             "Pelagonemertidae",
+             "Bolinopsidae",
+             "Krohnittidae"),
+    uid = c(
+      "84bb3372-b912-4801-b1d5-b27f50f37888",
+      "429429ed-d07d-463f-9316-62c7adde7e71",
+      "5672a6f8-b1a2-4dfd-88c0-6048b4fd0202",
+      "345d2e9d-c443-4579-8f5b-c9b15ab55c84"
+    )
+  ))
+uid_fil
+```
+
+```{r fig3-tree,  fig.height=8, fig.width=10, message=FALSE, warning=FALSE}
+tr5<- tr4 %<+% uid_fil + 
+  geom_tiplab(aes(image=uid),  angle=0 ,
+              geom="phylopic", offset=c(0.7, 0.8,0.6,0.8)
+              )+
+  labs(fill="",color="")
+tr5 
+
+ggsave("img/MMMD-phylo-tree1.png" ,width=11, height=8, dpi=600)
+```
+```{r}
+#just check the uid and pictures to remove
+tr5$data |> filter(is.na(uid)==F, phylum=="Chaetognatha") |> arrange(angle)
+```
+
+
+
