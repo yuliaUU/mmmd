@@ -660,10 +660,10 @@ create_histogram_plot <- function(taxa, data_calibrated) {
     pivot_longer(cols = c("quantity_measure", "NetCalib", "NetTowCalib", "NetTowSeasonCalib")) |>
     drop_na(value) |>
     mutate(name = case_when(
-      name == "quantity_measure" ~ "A) Raw Data",
-      name == "NetCalib" ~ "B) Net class corrected",
-      name == "NetTowCalib" ~ "C) Net class-Tow corrected",
-      name == "NetTowSeasonCalib" ~ "D) Net class-Tow-Season corrected"
+      name == "quantity_measure" ~ "a) Raw Data",
+      name == "NetCalib" ~ "b) Net class corrected",
+      name == "NetTowCalib" ~ "c) Net class-Tow corrected",
+      name == "NetTowSeasonCalib" ~ "d) Net class-Tow-Season corrected"
     )) 
   
   ggplot(test, aes(x = value,y=NetClass, fill = NetClass)) +
